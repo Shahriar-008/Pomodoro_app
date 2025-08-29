@@ -32,11 +32,20 @@ except Exception:
         messagebox.showinfo(title, message)
 
 HAS_TRAY = False
+HAS_PIL = False
 try:
-    import pystray
     from PIL import Image, ImageDraw
-    HAS_TRAY = True
-except Exception:
+    HAS_PIL = True
+    try:
+        import pystray
+        HAS_TRAY = True
+        print("System tray support is enabled")
+    except Exception as e:
+        print(f"System tray not available: {e}")
+        HAS_TRAY = False
+except Exception as e:
+    print(f"PIL not available: {e}")
+    HAS_PIL = False
     HAS_TRAY = False
 
 # Resolve app directory for both script and PyInstaller bundle
@@ -80,8 +89,13 @@ class PomodoroApp(tk.Tk):
         self.update_display(0)
         self.update_progress_ring(0.0)
         self.in_tray = False
+        
+        # Initialize system tray support if available
+        self.tray_icon = None
         if HAS_TRAY:
-            self.setup_tray_icon()  # Use our more robust method
+            self.create_tray_icon()
+            
+        # Set up window close handler
         self.protocol('WM_DELETE_WINDOW', self.on_closing)
         self.bind('<space>', lambda e: self.start_pause())
         self.bind('<Key-r>', lambda e: self.reset())
@@ -550,44 +564,44 @@ class PomodoroApp(tk.Tk):
         self.status_label.config(text='Reset')
 
     def on_closing(self):
-        if HAS_TRAY and self.tray_icon is not None:
+        """Handle window close event"""
+        if HAS_TRAY:
+            # Try to minimize to tray
             self.hide_to_tray()
         else:
-            # If we don't have tray support or tray icon is None, 
-            # try to create it once more before destroying
-            if HAS_TRAY and self.setup_tray_icon():
-                self.hide_to_tray()
-            else:
-                self.destroy()
+            # No tray support, destroy the window
+            self.destroy()
 
     def hide_to_tray(self):
+        """Minimize the application to system tray"""
         try:
-            # Make sure the tray icon is active before hiding
-            if self.tray_icon is None or not hasattr(self, 'tray_icon'):
-                self.setup_tray_icon()  # Re-setup tray icon if it's not available
+            # If the tray icon doesn't exist or is stopped, create it
+            if not hasattr(self, 'tray_icon') or self.tray_icon is None:
+                if not self.create_tray_icon():
+                    # If we can't create a tray icon, just minimize
+                    self.iconify()
+                    return
             
-            if self.tray_icon is not None:
-                self.withdraw()
-                self.in_tray = True
-                self.status_label.config(text='Minimized to tray')
-            else:
-                # If tray icon creation failed, just minimize instead of hiding
-                self.iconify()
+            # Hide the window
+            self.withdraw()
+            self.in_tray = True
+            self.status_label.config(text='Minimized to tray')
+            print("Successfully minimized to system tray")
         except Exception as e:
             print(f"Error hiding to tray: {e}")
             # Fallback to minimizing the window
             self.iconify()
 
     def restore_from_tray(self):
+        """Restore the application from system tray"""
         try:
             self.deiconify()
             self.lift()
-            self.focus_force()  # Give focus to the window
+            self.focus_force()
             self.in_tray = False
-            self.status_label.config(text='Restored')
+            self.status_label.config(text='Restored from tray')
         except Exception as e:
             print(f"Error restoring from tray: {e}")
-            # Try to make the window visible in any way possible
             try:
                 self.state('normal')
                 self.lift()
@@ -595,91 +609,75 @@ class PomodoroApp(tk.Tk):
             except Exception:
                 pass
 
-    def setup_tray(self):
-        try:
-            img = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
-            d = ImageDraw.Draw(img)
-            d.ellipse((8, 8, 56, 56), fill='#1f6feb')
-            d.rectangle((26, 20, 38, 44), fill='#fff')
-        except Exception:
-            img = None
-
-        def on_show(icon, item):
-            self.after(0, self.restore_from_tray)
-        def on_stretch(icon, item):
-            self.after(0, lambda: (self.restore_from_tray(), self.show_stretch_popup(), self.after(25000, self.hide_to_tray())))
-        def on_toggle(icon, item):
-            self.after(0, self.start_pause)
-        def on_quit(icon, item):
-            try:
-                icon.stop()
-            except Exception:
-                pass
-            self.after(0, self.destroy)
-
-        menu = pystray.Menu(
-            pystray.MenuItem('Show', on_show),
-            pystray.MenuItem('Start/Pause', on_toggle),
-            pystray.MenuItem('Stretch', on_stretch),
-            pystray.MenuItem('Quit', on_quit)
-        )
-        try:
-            self.tray_icon = pystray.Icon('pomodoro', img, 'Pomodoro', menu)
-            t = threading.Thread(target=self.tray_icon.run, daemon=True)
-            t.start()
-        except Exception:
-            self.tray_icon = None
-    
-    def setup_tray_icon(self):
-        """Create or recreate the system tray icon"""
-        if not HAS_TRAY:
+    def create_tray_icon(self):
+        """Create a system tray icon for the application"""
+        if not HAS_TRAY or not HAS_PIL:
+            print("System tray support is not available")
             return False
             
         try:
-            # Create icon image
+            # Stop any existing tray icon
+            if hasattr(self, 'tray_icon') and self.tray_icon is not None:
+                try:
+                    self.tray_icon.stop()
+                    # Give it a moment to clean up
+                    import time
+                    time.sleep(0.5)
+                except Exception as e:
+                    print(f"Error stopping existing tray icon: {e}")
+            
+            # Create a simple icon image
             img = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
             d = ImageDraw.Draw(img)
             d.ellipse((8, 8, 56, 56), fill='#1f6feb')
             d.rectangle((26, 20, 38, 44), fill='#fff')
             
-            # Define menu callbacks
-            def on_show(icon, item):
+            # Define callback functions
+            def on_show_window(icon, item):
+                # Ensure we call this on the main thread
                 self.after(0, self.restore_from_tray)
                 
-            def on_toggle(icon, item):
+            def on_toggle_timer(icon, item):
                 self.after(0, self.start_pause)
                 
-            def on_stretch(icon, item):
-                self.after(0, lambda: (self.restore_from_tray(), self.show_stretch_popup(), self.after(25000, self.hide_to_tray)))
+            def on_show_stretch(icon, item):
+                def show_and_stretch():
+                    self.restore_from_tray()
+                    self.show_stretch_popup()
+                self.after(0, show_and_stretch)
                 
-            def on_quit(icon, item):
-                try:
-                    icon.stop()
-                except Exception:
-                    pass
+            def on_quit_app(icon, item):
+                icon.stop()
                 self.after(0, self.destroy)
-
+            
+            # Create the menu
             menu = pystray.Menu(
-                pystray.MenuItem('Show', on_show),
-                pystray.MenuItem('Start/Pause', on_toggle),
-                pystray.MenuItem('Stretch', on_stretch),
-                pystray.MenuItem('Quit', on_quit)
+                pystray.MenuItem('Show Window', on_show_window),
+                pystray.MenuItem('Start/Pause Timer', on_toggle_timer),
+                pystray.MenuItem('Take a Stretch', on_show_stretch),
+                pystray.MenuItem('Quit', on_quit_app)
             )
             
-            # Stop existing tray icon if it exists
-            if hasattr(self, 'tray_icon') and self.tray_icon is not None:
-                try:
-                    self.tray_icon.stop()
-                except Exception:
-                    pass
-                    
-            # Create new tray icon
-            self.tray_icon = pystray.Icon('pomodoro', img, 'Pomodoro', menu)
-            t = threading.Thread(target=self.tray_icon.run, daemon=True)
-            t.start()
+            # Create the icon
+            self.tray_icon = pystray.Icon('pomodoro', img, 'Pomodoro Timer', menu)
+            
+            # Start the icon using pystray's detached runner (more reliable on Windows)
+            try:
+                self.tray_icon.run_detached()
+            except Exception:
+                # Fallback to manual thread if run_detached is unavailable
+                self.tray_thread = threading.Thread(
+                    target=self.tray_icon.run,
+                    daemon=True,
+                    name="TrayIconThread"
+                )
+                self.tray_thread.start()
+            
+            print("System tray icon created successfully")
             return True
+            
         except Exception as e:
-            print(f"Error setting up tray icon: {e}")
+            print(f"Failed to create system tray icon: {e}")
             self.tray_icon = None
             return False
 
