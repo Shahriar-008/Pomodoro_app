@@ -284,26 +284,204 @@ class PomodoroApp(tk.Tk):
             return []
 
     def show_history(self):
+        import matplotlib
+        matplotlib.use('TkAgg')
+        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        from datetime import datetime, timedelta, timezone
+
         hist = self.load_history()
         dlg = tk.Toplevel(self)
-        dlg.title('Pomodoro History')
-        dlg.geometry('420x400')
+        dlg.title('Pomodoro History & Stats')
+        dlg.geometry('650x600')
         dlg.transient(self)
 
-        frame = ttk.Frame(dlg, padding=8)
-        frame.pack(fill='both', expand=True)
+        # Aggregate stats
+        today = datetime.now(timezone.utc).date()
+        week_start = today - timedelta(days=today.weekday())
+        month_start = today.replace(day=1)
+        daily = {}
+        weekly = 0
+        monthly = 0
+        today_total = 0
+        total_sessions = 0
+        for entry in hist:
+            ts = entry.get('ts') or entry.get('timestamp')
+            minutes = entry.get('minutes', 0)
+            d = datetime.fromisoformat(ts).date() if ts else None
+            if d:
+                daily[d] = daily.get(d, 0) + minutes
+                if d == today:
+                    today_total += minutes
+                if d >= week_start:
+                    weekly += minutes
+                if d >= month_start:
+                    monthly += minutes
+                total_sessions += 1
 
-        text = tk.Text(frame, wrap='none')
-        text.pack(fill='both', expand=True)
-        text.insert('1.0', 'Timestamp (UTC)\tType\tMinutes\n')
-        text.insert('1.0', '---\n')
-        for e in reversed(hist[-100:]):
-            ts = e.get('ts', '')
-            typ = e.get('type', '')
-            mins = e.get('minutes', '')
-            text.insert('1.0', f'{ts}\t{typ}\t{mins}\n')
+        # Stats frame - styled as cards
+        p = self.palette()
+        stats_frame = ttk.Frame(dlg)
+        stats_frame.pack(fill='x', padx=10, pady=10)
+        
+        # Create stylish card-like displays for stats
+        cards_frame = ttk.Frame(stats_frame)
+        cards_frame.pack(fill='x', expand=True)
+        
+        # Today's card
+        today_frame = tk.Frame(cards_frame, bg=p['accent'], bd=0, highlightthickness=0)
+        today_frame.grid(row=0, column=0, padx=5, pady=5, sticky='ew')
+        tk.Label(today_frame, text="TODAY", bg=p['accent'], fg="white", 
+                font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(8,0))
+        tk.Label(today_frame, text=f"{today_total//60}h {today_total%60}m", 
+                bg=p['accent'], fg="white", font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=10, pady=(0,8))
+        
+        # Week card
+        week_frame = tk.Frame(cards_frame, bg=p['break_accent'], bd=0, highlightthickness=0)
+        week_frame.grid(row=0, column=1, padx=5, pady=5, sticky='ew')
+        tk.Label(week_frame, text="THIS WEEK", bg=p['break_accent'], fg="white", 
+                font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(8,0))
+        tk.Label(week_frame, text=f"{weekly//60}h {weekly%60}m", 
+                bg=p['break_accent'], fg="white", font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=10, pady=(0,8))
+        
+        # Month card
+        month_frame = tk.Frame(cards_frame, bg=p['accent2'], bd=0, highlightthickness=0)
+        month_frame.grid(row=0, column=2, padx=5, pady=5, sticky='ew')
+        tk.Label(month_frame, text="THIS MONTH", bg=p['accent2'], fg="white", 
+                font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(8,0))
+        tk.Label(month_frame, text=f"{monthly//60}h {monthly%60}m", 
+                bg=p['accent2'], fg="white", font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=10, pady=(0,8))
+        
+        # Sessions card
+        sessions_frame = tk.Frame(cards_frame, bg=p['card'], bd=0, highlightthickness=1, highlightbackground=p['subtle'])
+        sessions_frame.grid(row=0, column=3, padx=5, pady=5, sticky='ew')
+        tk.Label(sessions_frame, text="TOTAL SESSIONS", bg=p['card'], fg=p['fg'], 
+                font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(8,0))
+        tk.Label(sessions_frame, text=f"{total_sessions}", 
+                bg=p['card'], fg=p['fg'], font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=10, pady=(0,8))
+                
+        # Make columns evenly sized
+        for i in range(4):
+            cards_frame.grid_columnconfigure(i, weight=1)
 
-        btn_frame = ttk.Frame(frame)
+        # Graph frame
+        graph_frame = ttk.Frame(dlg)
+        graph_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Create a modern, sleek figure with dark style
+        plt.style.use('seaborn-v0_8-darkgrid')
+        fig, ax = plt.subplots(figsize=(6.2,3.2))
+        fig.patch.set_facecolor('#161b22' if self.dark_mode.get() else '#f8f9fa')
+        
+        # Get palette colors for consistency with app theme
+        p = self.palette()
+        days = sorted(daily.keys())
+        values = [daily[d]/60 for d in days]  # hours
+        date_strs = [d.strftime('%m/%d') for d in days]  # shorter date format
+        
+        # Create gradient color based on values
+        colors = []
+        for val in values:
+            if val < 2:  # Less than 2 hours
+                colors.append(p['accent'] if val > 0 else p['ring_bg'])
+            elif val < 4:  # 2-4 hours
+                colors.append(p['break_accent'])
+            else:  # 4+ hours
+                colors.append(p['accent2'])
+        
+        # Create modern bar chart with rounded corners
+        bars = ax.bar(date_strs, values, color=colors, width=0.65, alpha=0.85, 
+                     edgecolor=p['card'], linewidth=1.5)
+        
+        # Add value labels on top of bars
+        for bar in bars:
+            height = bar.get_height()
+            if height > 0.2:  # Only label if there's enough space
+                ax.text(bar.get_x() + bar.get_width()/2., height + 0.1,
+                        f'{height:.1f}h', ha='center', va='bottom', 
+                        color=p['fg'], fontsize=8)
+        
+        # Set title and style the chart
+        ax.set_title("Daily Focus Hours", fontsize=13, color=p['fg'], pad=10)
+        ax.set_ylabel("Hours", color=p['fg'])
+        ax.set_xlabel("Date", color=p['fg'])
+        
+        # Style the axes
+        ax.tick_params(axis='x', colors=p['fg'], rotation=45)
+        ax.tick_params(axis='y', colors=p['fg'])
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['bottom'].set_color(p['subtle'])
+        ax.spines['left'].set_color(p['subtle'])
+        
+        # Highlight today
+        if today in daily:
+            today_idx = days.index(today)
+            bars[today_idx].set_edgecolor(p['accent'])
+            bars[today_idx].set_linewidth(2)
+        
+        # Tighten layout and add to canvas
+        fig.tight_layout()
+        canvas = FigureCanvasTkAgg(fig, master=graph_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        # History table with scrollbar (below graph)
+        ttk.Label(dlg, text="Recent Sessions", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=15, pady=(5,0))
+        
+        table_frame = ttk.Frame(dlg)
+        table_frame.pack(fill="both", expand=True, padx=10, pady=(2,10))
+        
+        # Add scrollbar
+        scrollbar = ttk.Scrollbar(table_frame)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Create and style treeview
+        style = ttk.Style()
+        style.configure("Treeview", 
+                        background=p['card'],
+                        foreground=p['fg'],
+                        fieldbackground=p['card'],
+                        borderwidth=0)
+        style.configure("Treeview.Heading", 
+                        font=("Segoe UI", 9, "bold"),
+                        background=p['bg'],
+                        foreground=p['fg'])
+        style.map("Treeview", background=[('selected', p['accent'])])
+        
+        cols = ("Date", "Time", "Type", "Minutes")
+        tree = ttk.Treeview(table_frame, columns=cols, show="headings", yscrollcommand=scrollbar.set)
+        scrollbar.config(command=tree.yview)
+        
+        tree.heading("Date", text="Date")
+        tree.heading("Time", text="Time")
+        tree.heading("Type", text="Type")
+        tree.heading("Minutes", text="Minutes")
+        
+        tree.column("Date", anchor="center", width=100)
+        tree.column("Time", anchor="center", width=80)
+        tree.column("Type", anchor="center", width=80)
+        tree.column("Minutes", anchor="center", width=80)
+        
+        for entry in hist[-50:][::-1]:
+            ts = entry.get('ts') or entry.get('timestamp')
+            typ = entry.get('type', '')
+            mins = entry.get('minutes', '')
+            if ts:
+                try:
+                    dt = datetime.fromisoformat(ts)
+                    date_str = dt.strftime("%Y-%m-%d")
+                    time_str = dt.strftime("%H:%M:%S")
+                    tree.insert("", "end", values=(date_str, time_str, typ, mins))
+                except:
+                    tree.insert("", "end", values=(ts, "", typ, mins))
+            else:
+                tree.insert("", "end", values=("Unknown", "", typ, mins))
+        
+        tree.pack(fill="both", expand=True)
+
+        # Buttons
+        btn_frame = ttk.Frame(dlg)
         btn_frame.pack(fill='x', pady=(6,0))
         ttk.Button(btn_frame, text='Export', command=self.export_history).pack(side='left', padx=6)
         ttk.Button(btn_frame, text='Clear', command=self.clear_history).pack(side='left', padx=6)
@@ -437,7 +615,7 @@ class PomodoroApp(tk.Tk):
             play_sound()
             if self.is_focus:
                 try:
-                    self.append_history('focus', int(self.focus_minutes.get()), datetime.datetime.utcnow().isoformat())
+                    self.append_history('focus', int(self.focus_minutes.get()), datetime.datetime.now(datetime.timezone.utc).isoformat())
                 except Exception:
                     pass
                 if self.in_tray:
