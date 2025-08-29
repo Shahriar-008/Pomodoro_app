@@ -490,42 +490,69 @@ class PomodoroApp(tk.Tk):
     def show_stretch_popup(self):
         try:
             popup = tk.Toplevel(self)
-            popup.title('Stretch Time')
-            popup.geometry('380x240')
+            popup.title('Break Time — Recharge!')
+            popup.geometry('400x260')
             popup.resizable(False, False)
             popup.attributes('-topmost', True)
 
-            header = ttk.Label(popup, text='Time for a break — Stretch!', font=('Segoe UI', 12, 'bold'))
-            header.pack(pady=(8, 4))
+            # Themed background
+            p = self.palette()
+            popup.configure(bg=p['card'])
 
-            canvas = tk.Canvas(popup, width=330, height=130, bg=self.cget('bg'), highlightthickness=0)
+            # Futuristic animated header
+            header_var = tk.StringVar(value='Break Time — Recharge!')
+            header = tk.Label(popup, textvariable=header_var, font=('Segoe UI', 15, 'bold'), fg=p['accent'], bg=p['card'])
+            header.pack(pady=(12, 2))
+
+            # Neon/gradient stick figure animation
+            canvas = tk.Canvas(popup, width=340, height=140, bg=p['card'], highlightthickness=0)
             canvas.pack(pady=4)
+            cx, cy = 170, 50
+            # Neon colors
+            neon = p['accent']
+            neon2 = p['break_accent']
+            # Draw stick figure with glow
+            def draw_figure(offset=0, glow=8):
+                # Glow effect: draw multiple lines/ovals with increasing alpha
+                for g in range(glow, 0, -2):
+                    alpha = int(30 + 20 * g)
+                    color = neon if g % 2 == 0 else neon2
+                    # Head
+                    canvas.create_oval(cx-14-g, cy-14-g, cx+14+g, cy+14+g, outline=color, width=2)
+                # Main figure
+                canvas.create_oval(cx-12, cy-12, cx+12, cy+12, fill='#ffe0b2', outline=neon, width=3)
+                canvas.create_line(cx, cy+12, cx, cy+48, width=5, fill=neon)
+                canvas.create_line(cx, cy+6, cx-30, cy+20-offset, width=5, fill=neon2)
+                canvas.create_line(cx, cy+6, cx+30, cy+20-offset, width=5, fill=neon2)
+                canvas.create_line(cx, cy+48, cx-20, cy+86, width=5, fill=neon)
+                canvas.create_line(cx, cy+48, cx+20, cy+86, width=5, fill=neon)
 
-            cx, cy = 160, 40
-            head = canvas.create_oval(cx-12, cy-12, cx+12, cy+12, fill='#ffe0b2', outline='#b8860b')
-            body = canvas.create_line(cx, cy+12, cx, cy+48, width=4, fill='#37474f')
-            left_arm = canvas.create_line(cx, cy+6, cx-30, cy+20, width=4, fill='#37474f')
-            right_arm = canvas.create_line(cx, cy+6, cx+30, cy+20, width=4, fill='#37474f')
-            left_leg = canvas.create_line(cx, cy+48, cx-20, cy+86, width=4, fill='#37474f')
-            right_leg = canvas.create_line(cx, cy+48, cx+20, cy+86, width=4, fill='#37474f')
-
+            # Countdown and progress
             countdown_var = tk.IntVar(value=20)
-            countdown_lbl = ttk.Label(popup, text='20s', font=('Segoe UI', 11, 'bold'))
+            countdown_lbl = tk.Label(popup, text='20s', font=('Segoe UI', 13, 'bold'), fg=p['accent2'], bg=p['card'])
             countdown_lbl.pack()
-
             progress = ttk.Progressbar(popup, length=320, mode='determinate', maximum=20)
             progress.pack(pady=(6, 8))
 
+            # Animate header text (futuristic pulse)
+            def animate_header():
+                t = countdown_var.get()
+                dots = '.' * ((20-t)%4)
+                header_var.set(f'Break Time — Recharge{dots}')
+                popup.after(350, animate_header)
+
+            # Animate stick figure
             anim_state = {'t': 0}
             def animate_frame():
                 t = anim_state['t']
                 frac = (t % 12) / 12
                 swing = 30
                 offset = int((1 - abs(2*frac-1)) * swing)
-                canvas.coords(left_arm, cx, cy+6, cx-30, cy+20-offset)
-                canvas.coords(right_arm, cx, cy+6, cx+30, cy+20-offset)
+                canvas.delete('all')
+                draw_figure(offset=offset, glow=8)
                 anim_state['t'] += 1
                 popup.after(100, animate_frame)
+
             def countdown_step():
                 s = countdown_var.get()
                 countdown_lbl.config(text=f'{s}s')
@@ -535,12 +562,16 @@ class PomodoroApp(tk.Tk):
                     return
                 countdown_var.set(s-1)
                 popup.after(1000, countdown_step)
+
+            animate_header()
             animate_frame()
             countdown_step()
+
+            # Center popup over main window
             try:
                 self_center_x = self.winfo_rootx() + self.winfo_width()//2
                 self_center_y = self.winfo_rooty() + self.winfo_height()//2
-                popup.geometry(f'+{self_center_x-190}+{self_center_y-120}')
+                popup.geometry(f'+{self_center_x-200}+{self_center_y-130}')
             except Exception:
                 pass
         except Exception:
